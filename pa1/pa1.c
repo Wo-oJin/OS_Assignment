@@ -31,6 +31,49 @@
 #include "list_head.h"
 #include "parser.h"
 
+LIST_HEAD(history);
+
+struct entry {
+    struct list_head list;
+    char* string;
+};
+
+void push_queue(char* string)
+{
+    /* TODO: Implement this function */
+    struct entry* data = (struct entry*)malloc(sizeof(struct entry));
+    data->string = (char*)malloc(sizeof(char) * (strlen(string)+1));
+    strcpy(data->string, string);
+   
+    list_add_tail(&(data->list), &history);
+}
+
+void dump_queue(int idx)
+{
+    /* TODO: Implement this function */
+    struct list_head* tp;
+    struct entry* current_entry;
+    int num = 0;
+
+    if(idx == -1){
+      list_for_each(tp, &history) {
+        current_entry = list_entry(tp, struct entry, list);
+        fprintf(stderr, "%d: %s", num, current_entry->string);
+        num++;
+      }
+    }
+    else{
+      list_for_each(tp, &history) {
+        current_entry = list_entry(tp, struct entry, list);
+        if(num == idx){
+          fprintf(stderr, "%d: %s", num, current_entry->string);
+          break;
+        }
+        num++;
+      }
+    }
+}
+
 /***********************************************************************
  * run_command()
  *
@@ -43,6 +86,7 @@
  *   Return 0 when user inputs "exit"
  *   Return <0 on error
  */
+ 
 static int run_command(int nr_tokens, char *tokens[])
 {
 
@@ -59,7 +103,7 @@ static int run_command(int nr_tokens, char *tokens[])
     fprintf(stderr, "%s\n", current_wd);
   }
   else if(!strcmp(tokens[0],"/bin/ls") || !strcmp(tokens[0],"ls")){
-    struct dirent* entry = NULL;
+    struct dirent* current_dir = NULL;
     char current_wd[255];
     
     getcwd(current_wd, 255);
@@ -71,9 +115,9 @@ static int run_command(int nr_tokens, char *tokens[])
     }
     */
 
-    while((entry = readdir(dir))!=NULL){
-      if(strcmp(entry->d_name,"..") && strcmp(entry->d_name,".")) 
-        fprintf(stderr, "%s ", entry->d_name);
+    while((current_dir = readdir(dir))!=NULL){
+      if(strcmp(current_dir->d_name,"..") && strcmp(current_dir->d_name,".")) 
+        fprintf(stderr, "%s ", current_dir->d_name);
     }
 
     fprintf(stderr,"\n");
@@ -121,8 +165,14 @@ static int run_command(int nr_tokens, char *tokens[])
       wait(&status);
     }
     else{ // 자식
-      execv(tokens[0]+2, params)
+      execv(tokens[0]+2, params);
     }
+  }
+  else if(!strcmp(tokens[0], "history") || !strcmp(tokens[0], "!")){
+    if(!strcmp(tokens[0],"history"))
+      dump_queue(-1);
+    else
+      dump_queue(atoi(tokens[1]));
   }
 	else{
     fprintf(stderr, "Unable to execute %s\n", tokens[0]);
@@ -132,14 +182,12 @@ static int run_command(int nr_tokens, char *tokens[])
   return 1;
 }
 
-
 /***********************************************************************
  * struct list_head history
  *
  * DESCRIPTION
  *   Use this list_head to store unlimited command history.
  */
-LIST_HEAD(history);
 
 
 /***********************************************************************
@@ -151,7 +199,7 @@ LIST_HEAD(history);
  */
 static void append_history(char * const command)
 {
-
+  push_queue(command);
 }
 
 
