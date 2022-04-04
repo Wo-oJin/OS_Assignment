@@ -31,6 +31,7 @@
 #include "list_head.h"
 #include "parser.h"
 
+static int __process_command(char * command);
 LIST_HEAD(history);
 
 struct entry {
@@ -40,9 +41,8 @@ struct entry {
 
 void push_queue(char* string)
 {
-    /* TODO: Implement this function */
     struct entry* data = (struct entry*)malloc(sizeof(struct entry));
-    data->string = (char*)malloc(sizeof(char) * (strlen(string)+1));
+    data->string = (char*)malloc(sizeof(char) * (strlen(string)+5));
     strcpy(data->string, string);
    
     list_add_tail(&(data->list), &history);
@@ -50,15 +50,14 @@ void push_queue(char* string)
 
 void dump_queue(int idx)
 {
-    /* TODO: Implement this function */
     struct list_head* tp;
     struct entry* current_entry;
     int num = 0;
 
-    if(idx == -1){
+    if(idx == -1){ 
       list_for_each(tp, &history) {
         current_entry = list_entry(tp, struct entry, list);
-        fprintf(stderr, "%d: %s", num, current_entry->string);
+        fprintf(stderr, "%2d: %s", num, current_entry->string);
         num++;
       }
     }
@@ -66,117 +65,128 @@ void dump_queue(int idx)
       list_for_each(tp, &history) {
         current_entry = list_entry(tp, struct entry, list);
         if(num == idx){
-          fprintf(stderr, "%d: %s", num, current_entry->string);
-          break;
+          char* fd = "\n";
+          strcat(current_entry->string,fd);
+          __process_command(current_entry->string);
         }
         num++;
       }
     }
 }
 
-/***********************************************************************
- * run_command()
- *
- * DESCRIPTION
- *   Implement the specified shell features here using the parsed
- *   command tokens.
- *
- * RETURN VALUE
- *   Return 1 on successful command execution
- *   Return 0 when user inputs "exit"
- *   Return <0 on error
- */
- 
 static int run_command(int nr_tokens, char *tokens[])
 {
-
-  //printf("cmd: %s\n",tokens[0]);
-  if(!strcmp(tokens[0],"/bin/echo") || !strcmp(tokens[0],"echo")){
-    for(int i=1;i<nr_tokens;i++)
-      fprintf(stderr, "%s ", tokens[i]);
-    fprintf(stderr, "\n");
+  bool flag=false;
+  for(int i=0;i<nr_tokens;i++){
+    if(!strcmp(tokens[i], "|"))
+      flag=true;
   }
-  else if(!strcmp(tokens[0],"pwd") || !strcmp(tokens[0],"/bin/pwd")){
-    char current_wd[255];
-    getcwd(current_wd, 255);
 
-    fprintf(stderr, "%s\n", current_wd);
-  }
-  else if(!strcmp(tokens[0],"/bin/ls") || !strcmp(tokens[0],"ls")){
-    struct dirent* current_dir = NULL;
-    char current_wd[255];
+  if(flag){
+    int fd[2];                 
+    if(pipe(fd)==-1)
+      printf("pipe error\n");                       
     
-    getcwd(current_wd, 255);
-    DIR* dir = opendir(current_wd);
+    char* parent_command[10];
+    char* child_command[10];
+
+    int i,k;
+    for(i=0;strcmp(tokens[i],"|");i++)
+      parent_command[i] = tokens[i];
+    parent_command[i++] = 0;
+
+    for(k=0;i<nr_tokens;i++,k++){
+      child_command[k] = tokens[i];
+    }
+    child_command[k] = 0;
 
     /*
-    if(dir == NULL){
-      printf("current dircetory error\n");
-    }
+    for(int i=0;parent_command[i]!=NULL;i++)
+      printf("%s ",parent_command[i]);
+
+    for(int i=0;child_command[i]!=NULL;i++)
+      printf("%s ",child_command[i]);
     */
 
-    while((current_dir = readdir(dir))!=NULL){
-      if(strcmp(current_dir->d_name,"..") && strcmp(current_dir->d_name,".")) 
-        fprintf(stderr, "%s ", current_dir->d_name);
+    printf("\n");          
+
+    if(fork()==0){
+      close(STDOUT_FILENO);
+      dup2(fd[1],STDOUT_FILENO);
+      
+      close(fd[0]);
+      close(fd[1]);
+      
+      //char* const param[] = {"echo","hello","my","cruel","operating","system","world",0};
+      execvp(parent_command[0],parent_command);
+      exit(1);
     }
 
-    fprintf(stderr,"\n");
+    if(fork()==0){
+      close(STDIN_FILENO);
+      dup2(fd[0],STDIN_FILENO);
+      
+      close(fd[0]);
+      close(fd[1]);
+      
+      //char* const param[] = {"cut","-c16-32",0};
+      execvp(child_command[0],child_command);
+  
+      exit(1);
+    }
 
-    closedir(dir);
-  }
-  else if(!strcmp(tokens[0],"cp")){
-    struct stat sb;
-    char buf;
-    int src = open(tokens[1], O_RDONLY );  
-    int dst = open(tokens[2], O_WRONLY | O_CREAT | O_TRUNC, 0644 );
+    close(fd[0]);
+    close(fd[1]);
 
-    while(read(src, &buf, 1))
-      write(dst, &buf, 1);
-    
-    fstat(src,&sb);
-    chmod(tokens[2],sb.st_mode);
-
-    close(src);
-    close(dst);
-  }
-  else if(!strcmp(tokens[0],"cd")){
-    if(nr_tokens==1 || !strcmp(tokens[1],"~"))
-      chdir(getenv("HOME"));
-    else
-      chdir(tokens[1]);
-    
-    //char current_wd[255];
-
-    //printf("dir: %s\n",getcwd(current_wd, 255));
-  }
-  else if (strcmp(tokens[0], "exit") == 0){
+    wait(0);
+    wait(0);
     return 0;
   }
-  else if(tokens[0][0] == '.' && tokens[0][1] == '/'){ 
-    pid_t pid;
-    int status;
-    char** params = (char**)malloc(sizeof(char*)*(nr_tokens));
-    
-    for(int i=0;i<nr_tokens-1;i++)
-     params[i] = tokens[i+1];
-    params[nr_tokens-1] = NULL;
+  else{
+    if(!strcmp(tokens[0],"cd")){
+      if(nr_tokens==1 || !strcmp(tokens[1],"~"))
+        chdir(getenv("HOME"));
+      else
+        chdir(tokens[1]);
+    }
+    else if (strcmp(tokens[0], "exit") == 0){
+        return 0;
+    }
+    else if(!strcmp(tokens[0], "history") || !strcmp(tokens[0], "!")){
+      if(!strcmp(tokens[0],"history")){
+        dump_queue(-1);
+      }
+      else{
+        dump_queue(atoi(tokens[1]));
+      }
+    }
+	  else{
+      int status;
+      pid_t pid;
+      char** params = (char**)malloc(sizeof(char*)*(nr_tokens+1));
 
-    if((pid=fork()) == 0){ // 부모
-      wait(&status);
+      for(int i=0;i<nr_tokens;i++)
+        params[i] = tokens[i];
+
+      params[nr_tokens] = NULL;
+
+      if((pid=fork()) > 0) // 부모
+        wait(&status);
+      else{ // 자식
+        if(params[0][0]=='.'){
+          if((execv(tokens[0]+2, params))==-1){
+            fprintf(stderr, "Unable to execute %s\n", tokens[0]);
+	          return -EINVAL;
+          }
+        }
+        else{
+          if((execvp(tokens[0], params))==-1){
+           fprintf(stderr, "Unable to execute %s\n", tokens[0]);
+	         return -EINVAL;
+          }
+        }
+      }
     }
-    else{ // 자식
-      execv(tokens[0]+2, params);
-    }
-  }
-  else if(!strcmp(tokens[0], "history") || !strcmp(tokens[0], "!")){
-    if(!strcmp(tokens[0],"history"))
-      dump_queue(-1);
-    else
-      dump_queue(atoi(tokens[1]));
-  }
-	else{
-    fprintf(stderr, "Unable to execute %s\n", tokens[0]);
-	  return -EINVAL;
   }
 
   return 1;
@@ -264,7 +274,7 @@ static void __print_prompt(void)
  */
 int main(int argc, char * const argv[])
 {
-	char command[MAX_COMMAND_LEN] = { '\0' };
+  char command[MAX_COMMAND_LEN] = { '\0' };
 	int ret = 0;
 	int opt;
 
