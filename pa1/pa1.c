@@ -42,7 +42,7 @@ struct entry {
 void push_queue(char* string)
 {
     struct entry* data = (struct entry*)malloc(sizeof(struct entry));
-    data->string = (char*)malloc(sizeof(char) * (strlen(string)+5));
+    data->string = (char*)malloc(sizeof(char) * (strlen(string)+1));
     strcpy(data->string, string);
    
     list_add_tail(&(data->list), &history);
@@ -57,7 +57,11 @@ void dump_queue(int idx)
     if(idx == -1){ 
       list_for_each(tp, &history) {
         current_entry = list_entry(tp, struct entry, list);
-        fprintf(stderr, "%2d: %s", num, current_entry->string);
+        if((current_entry->string)[strlen(current_entry->string)-1]!=10){
+          fprintf(stderr, "%2d: %s\n", num, current_entry->string);
+        }
+        else
+          fprintf(stderr, "%2d: %s", num, current_entry->string);
         num++;
       }
     }
@@ -65,9 +69,10 @@ void dump_queue(int idx)
       list_for_each(tp, &history) {
         current_entry = list_entry(tp, struct entry, list);
         if(num == idx){
-          char* fd = "\n";
-          strcat(current_entry->string,fd);
-          __process_command(current_entry->string);
+          char tp[10];
+          strcpy(tp, current_entry->string);
+          __process_command(tp);
+          return;
         }
         num++;
       }
@@ -78,15 +83,14 @@ static int run_command(int nr_tokens, char *tokens[])
 {
   bool flag=false;
   for(int i=0;i<nr_tokens;i++){
-    if(!strcmp(tokens[i], "|"))
+    if(!strcmp(tokens[i], "|")){
       flag=true;
+      break;
+    }
   }
 
   if(flag){
     int fd[2];                 
-    if(pipe(fd)==-1)
-      printf("pipe error\n");                       
-    
     char* parent_command[10];
     char* child_command[10];
 
@@ -106,11 +110,9 @@ static int run_command(int nr_tokens, char *tokens[])
 
     for(int i=0;child_command[i]!=NULL;i++)
       printf("%s ",child_command[i]);
-    */
+    */        
 
-    printf("\n");          
-
-    if(fork()==0){
+    if(fork()==0){ 
       close(STDOUT_FILENO);
       dup2(fd[1],STDOUT_FILENO);
       
@@ -140,7 +142,6 @@ static int run_command(int nr_tokens, char *tokens[])
 
     wait(0);
     wait(0);
-    return 0;
   }
   else{
     if(!strcmp(tokens[0],"cd")){
@@ -149,16 +150,17 @@ static int run_command(int nr_tokens, char *tokens[])
       else
         chdir(tokens[1]);
     }
-    else if (strcmp(tokens[0], "exit") == 0){
-        return 0;
-    }
     else if(!strcmp(tokens[0], "history") || !strcmp(tokens[0], "!")){
       if(!strcmp(tokens[0],"history")){
         dump_queue(-1);
       }
       else{
-        dump_queue(atoi(tokens[1]));
+        int idx = atoi(tokens[1]);
+        dump_queue(idx);
       }
+    }
+    else if (strcmp(tokens[0], "exit") == 0){
+        return 0;
     }
 	  else{
       int status;
