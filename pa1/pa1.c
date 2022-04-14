@@ -21,15 +21,15 @@
 
 #include <string.h>
 
-#include <dirent.h>
-#include <fcntl.h>
-#include <sys/types.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
 
 #include "types.h"
 #include "list_head.h"
 #include "parser.h"
+
+/***********************************************************************/
+// History 출력을 위해 LIST_HEAD를 이용한 Queue 구현
 
 static int __process_command(char * command);
 LIST_HEAD(history);
@@ -39,7 +39,7 @@ struct entry {
     char* string;
 };
 
-void push_queue(char* string)
+void push_queue(char* string) // history에 cmd 저장
 {
     struct entry* data = (struct entry*)malloc(sizeof(struct entry));
     data->string = (char*)malloc(sizeof(char) * (strlen(string)+1));
@@ -48,30 +48,26 @@ void push_queue(char* string)
     list_add_tail(&(data->list), &history);
 }
 
-void dump_queue(int idx)
+void dump_queue(int idx) // history에 출력
 {
     struct list_head* tp;
     struct entry* current_entry;
     int num = 0;
 
-    if(idx == -1){ 
+    if(idx == -1){ // history 명령
       list_for_each(tp, &history) {
         current_entry = list_entry(tp, struct entry, list);
-        if((current_entry->string)[strlen(current_entry->string)-1]!=10){
-          fprintf(stderr, "%2d: %s\n", num, current_entry->string);
-        }
-        else
-          fprintf(stderr, "%2d: %s", num, current_entry->string);
+        fprintf(stderr, "%2d: %s", num, current_entry->string);
         num++;
       }
     }
-    else{
+    else{ // ! 명령
       list_for_each(tp, &history) {
         current_entry = list_entry(tp, struct entry, list);
         if(num == idx){
-          char tp[10];
-          strcpy(tp, current_entry->string);
-          __process_command(tp);
+          char tpString[20];
+          strcpy(tpString, current_entry->string);
+          __process_command(tpString);
           return;
         }
         num++;
@@ -79,9 +75,11 @@ void dump_queue(int idx)
     }
 }
 
+/***********************************************************************/
+
 static int run_command(int nr_tokens, char *tokens[])
 {
-  bool flag=false;
+  bool flag=false; // 파이프라인이 있는지 확인
   for(int i=0;i<nr_tokens;i++){
     if(!strcmp(tokens[i], "|")){
       flag=true;
@@ -89,7 +87,7 @@ static int run_command(int nr_tokens, char *tokens[])
     }
   }
 
-  if(flag){
+  if(flag){ // 파이프라인 명령어
     int fd[2];                 
     char* parent_command[10];
     char* child_command[10];
@@ -112,49 +110,52 @@ static int run_command(int nr_tokens, char *tokens[])
       printf("%s ",child_command[i]);
     */        
 
-    if(fork()==0){ 
-      close(STDOUT_FILENO);
-      dup2(fd[1],STDOUT_FILENO);
+    int status = 0;
+    pipe(fd);
+
+    if(fork()==0){ // 첫번째 자식 process
+      close(STDOUT_FILENO); // pipe로 내보내므로 STDOUT을 닫음
+      dup2(fd[1],STDOUT_FILENO); // STDOUT을 pipe로 연결
       
+      // 더 이상 필요 없으므로 닫음
+      close(fd[1]);  
       close(fd[0]);
-      close(fd[1]);
       
-      //char* const param[] = {"echo","hello","my","cruel","operating","system","world",0};
       execvp(parent_command[0],parent_command);
-      exit(1);
+      exit(0);
     }
 
-    if(fork()==0){
-      close(STDIN_FILENO);
-      dup2(fd[0],STDIN_FILENO);
+    if(fork()==0){ // 두번째 자식 process
+      close(STDIN_FILENO); // pipe로 받으므로 STDIN을 닫음
+      dup2(fd[0],STDIN_FILENO); // STDIN을 pipe로 연결
       
+      // 더 이상 필요 없으므로 닫음
       close(fd[0]);
       close(fd[1]);
-      
-      //char* const param[] = {"cut","-c16-32",0};
+    
       execvp(child_command[0],child_command);
   
-      exit(1);
+      exit(0);
     }
 
     close(fd[0]);
     close(fd[1]);
 
-    wait(0);
-    wait(0);
+    wait(&status);
+    wait(&status);
   }
-  else{
+  else{ // cd 명령
     if(!strcmp(tokens[0],"cd")){
       if(nr_tokens==1 || !strcmp(tokens[1],"~"))
         chdir(getenv("HOME"));
       else
         chdir(tokens[1]);
     }
-    else if(!strcmp(tokens[0], "history") || !strcmp(tokens[0], "!")){
+    else if(!strcmp(tokens[0], "history") || !strcmp(tokens[0], "!")){ // history 명령
       if(!strcmp(tokens[0],"history")){
         dump_queue(-1);
       }
-      else{
+      else{ 
         int idx = atoi(tokens[1]);
         dump_queue(idx);
       }
@@ -162,8 +163,8 @@ static int run_command(int nr_tokens, char *tokens[])
     else if (strcmp(tokens[0], "exit") == 0){
         return 0;
     }
-	  else{
-      int status;
+	  else{ //실행 파일
+      int status = 0;
       pid_t pid;
       char** params = (char**)malloc(sizeof(char*)*(nr_tokens+1));
 
@@ -175,17 +176,9 @@ static int run_command(int nr_tokens, char *tokens[])
       if((pid=fork()) > 0) // 부모
         wait(&status);
       else{ // 자식
-        if(params[0][0]=='.'){
-          if((execv(tokens[0]+2, params))==-1){
-            fprintf(stderr, "Unable to execute %s\n", tokens[0]);
-	          return -EINVAL;
-          }
-        }
-        else{
-          if((execvp(tokens[0], params))==-1){
+        if((execvp(tokens[0], params))==-1){
            fprintf(stderr, "Unable to execute %s\n", tokens[0]);
 	         return -EINVAL;
-          }
         }
       }
     }
@@ -211,7 +204,7 @@ static int run_command(int nr_tokens, char *tokens[])
  */
 static void append_history(char * const command)
 {
-  push_queue(command);
+  push_queue(command); // queue에 history cmd 저장
 }
 
 
@@ -244,7 +237,6 @@ static void finalize(int argc, char * const argv[])
 
 }
 
-
 /*====================================================================*/
 /*          ****** DO NOT MODIFY ANYTHING BELOW THIS LINE ******      */
 /*          ****** BUT YOU MAY CALL SOME IF YOU WANT TO.. ******      */
@@ -276,7 +268,7 @@ static void __print_prompt(void)
  */
 int main(int argc, char * const argv[])
 {
-  char command[MAX_COMMAND_LEN] = { '\0' };
+	char command[MAX_COMMAND_LEN] = { '\0' };
 	int ret = 0;
 	int opt;
 
