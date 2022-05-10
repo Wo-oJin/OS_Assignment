@@ -117,8 +117,8 @@ void next_tcb() {
       __initialize_exit_context();
 
      int a = running_tcb->tid, b=daum_tcb->tid;
-     //printf("SWAP %d -> %d\n", a, b);
-     fprintf(stderr, "SWAP %d -> %d\n", running_tcb->tid, daum_tcb->tid);
+     printf("SWAP %d -> %d\n", a, b);
+     //fprintf(stderr, "SWAP %d -> %d\n", running_tcb->tid, daum_tcb->tid);
 
       prev_tcb = running_tcb;
       running_tcb = daum_tcb;
@@ -131,8 +131,8 @@ void next_tcb() {
     else{
       finish=true;
       int a = running_tcb->tid;
-      //printf("SWAP %d -> %d\n", a, -1);
-      fprintf(stderr, "SWAP %d -> %d\n", running_tcb->tid, -1);
+      printf("SWAP %d -> %d\n", a, -1);
+      //fprintf(stderr, "SWAP %d -> %d\n", running_tcb->tid, -1);
       running_tcb = Main;
       return;
     }
@@ -148,8 +148,8 @@ void next_tcb() {
       __initialize_exit_context();
 
      int a = running_tcb->tid, b=daum_tcb->tid;
-     //printf("SWAP %d -> %d\n", a, b);
-     fprintf(stderr, "SWAP %d -> %d\n", running_tcb->tid, daum_tcb->tid);
+     printf("SWAP %d -> %d\n", a, b);
+     //fprintf(stderr, "SWAP %d -> %d\n", running_tcb->tid, daum_tcb->tid);
 
       prev_tcb = running_tcb;
       running_tcb = daum_tcb;
@@ -162,8 +162,8 @@ void next_tcb() {
     else{
       finish=true;
       int a = running_tcb->tid;
-      //printf("SWAP %d -> %d\n", a, -1);
-      fprintf(stderr, "SWAP %d -> %d\n", running_tcb->tid, -1);
+      printf("SWAP %d -> %d\n", a, -1);
+      //fprintf(stderr, "SWAP %d -> %d\n", running_tcb->tid, -1);
       running_tcb = Main;
       return;
     }
@@ -171,8 +171,42 @@ void next_tcb() {
   else if(current_policy == RR){
 
   }
-  else{
+  else if(current_policy == PRIO){
+    daum_tcb = prio_scheduling(Main);
 
+    if(daum_tcb != NULL){
+      
+      if(daum_tcb->lifetime == 0){
+        terminate_tid = daum_tcb->tid;
+        __exit();
+      }
+      if(running_tcb->tid != daum_tcb->tid)
+        __initialize_exit_context();
+
+     int a = running_tcb->tid, b=daum_tcb->tid;
+     printf("SWAP %d -> %d\n", a, b);
+     //fprintf(stderr, "SWAP %d -> %d\n", running_tcb->tid, daum_tcb->tid);
+
+      prev_tcb = running_tcb;
+      running_tcb = daum_tcb;
+
+      makecontext(running_tcb->context, (void*)&next_tcb, 0);
+      if(prev_tcb->tid == running_tcb->tid)
+        next_tcb();
+      else
+        swapcontext(prev_tcb->context, running_tcb->context);
+
+      return;
+    }
+    else{
+      finish=true;
+      int a = running_tcb->tid;
+      if(a!=-1)
+        printf("SWAP %d -> %d\n", a, -1);
+        //fprintf(stderr, "SWAP %d -> %d\n", running_tcb->tid, -1);
+      running_tcb = Main;
+      return;
+    }
   }
 }
 
@@ -228,8 +262,25 @@ struct tcb *rr_scheduling(struct tcb *next) {
  **************************************************************************************/
 struct tcb *prio_scheduling(struct tcb *next) {
 
-    /* TODO: You have to implement this function. */
+  /* TODO: You have to implement this function. */
+  struct list_head* tp;
+  struct tcb* current_tcb;
+  struct tcb* prior_tcb = NULL;
+  int max = -1;
 
+  list_for_each(tp, &tcbs) {
+    current_tcb = list_entry(tp, struct tcb, list);
+    if(current_tcb->priority > max && current_tcb->lifetime > 0 && current_tcb->state == READY){
+      prior_tcb = current_tcb;
+      max = current_tcb->priority;
+    }
+  }
+  if(prior_tcb == NULL)
+    return prior_tcb;
+  else{
+    (prior_tcb->lifetime)--;
+    return prior_tcb;
+  }
 }
 
 /***************************************************************************************
@@ -333,8 +384,8 @@ void uthread_join(int tid) {
           next_tcb();
         }
         int a = tid;
-        //printf("JOIN %d\n", tid);
-        fprintf(stderr, "JOIN %d\n", a);
+        printf("JOIN %d\n", tid);
+        //fprintf(stderr, "JOIN %d\n", a);
         pop_tcbs(tid);
         break;
       }
