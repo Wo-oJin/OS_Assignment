@@ -116,8 +116,9 @@ void next_tcb() {
       __exit();
       __initialize_exit_context();
 
-     printf("SWAP %d -> %d\n", running_tcb->tid, daum_tcb->tid);
-      //fprintf(stderr, "SWAP %d -> %d\n", running_tcb->tid, daum_tcb->tid);
+     int a = running_tcb->tid, b=daum_tcb->tid;
+     //printf("SWAP %d -> %d\n", a, b);
+     fprintf(stderr, "SWAP %d -> %d\n", running_tcb->tid, daum_tcb->tid);
 
       prev_tcb = running_tcb;
       running_tcb = daum_tcb;
@@ -129,15 +130,43 @@ void next_tcb() {
     }
     else{
       finish=true;
-      printf("SWAP %d -> %d\n", running_tcb->tid, -1);
-      //fprintf(stderr, "SWAP %d -> %d\n", running_tcb->tid, -1);
+      int a = running_tcb->tid;
+      //printf("SWAP %d -> %d\n", a, -1);
+      fprintf(stderr, "SWAP %d -> %d\n", running_tcb->tid, -1);
       running_tcb = Main;
       return;
     }
     
   }
   else if(current_policy == SJF){
+    daum_tcb = sjf_scheduling(Main);
 
+    if(daum_tcb != NULL){
+      
+      terminate_tid = daum_tcb->tid;
+      __exit();
+      __initialize_exit_context();
+
+     int a = running_tcb->tid, b=daum_tcb->tid;
+     //printf("SWAP %d -> %d\n", a, b);
+     fprintf(stderr, "SWAP %d -> %d\n", running_tcb->tid, daum_tcb->tid);
+
+      prev_tcb = running_tcb;
+      running_tcb = daum_tcb;
+
+      makecontext(running_tcb->context, (void*)&next_tcb, 0);
+      swapcontext(prev_tcb->context, running_tcb->context);
+
+      return;
+    }
+    else{
+      finish=true;
+      int a = running_tcb->tid;
+      //printf("SWAP %d -> %d\n", a, -1);
+      fprintf(stderr, "SWAP %d -> %d\n", running_tcb->tid, -1);
+      running_tcb = Main;
+      return;
+    }
   }
   else if(current_policy == RR){
 
@@ -169,7 +198,6 @@ struct tcb *fifo_scheduling(struct tcb *next) {
 
   list_for_each(tp, &tcbs) {
     current_tcb = list_entry(tp, struct tcb, list);
-    //printf("current_tcb: %d\n",current_tcb->tid);
     if(current_tcb->state == READY)
       return current_tcb;
   }
@@ -214,8 +242,20 @@ struct tcb *prio_scheduling(struct tcb *next) {
  **************************************************************************************/
 struct tcb *sjf_scheduling(struct tcb *next) {
 
-    /* TODO: You have to implement this function. */
+  /* TODO: You have to implement this function. */
+  struct list_head* tp;
+  struct tcb* current_tcb;
+  struct tcb* shortest_tcb = NULL;
+  int min = 100;
 
+  list_for_each(tp, &tcbs) {
+    current_tcb = list_entry(tp, struct tcb, list);
+    if(current_tcb->lifetime < min && current_tcb->state == READY){
+      shortest_tcb = current_tcb;
+      min = current_tcb->lifetime;
+    }
+  }
+  return shortest_tcb;
 }
 
 /***************************************************************************************
@@ -292,8 +332,9 @@ void uthread_join(int tid) {
         while(!finish){
           next_tcb();
         }
-        printf("JOIN %d\n", tid);
-        //fprintf(stderr, "JOIN %d\n", tid);
+        int a = tid;
+        //printf("JOIN %d\n", tid);
+        fprintf(stderr, "JOIN %d\n", a);
         pop_tcbs(tid);
         break;
       }
