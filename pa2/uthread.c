@@ -10,7 +10,7 @@
 #define MEM 3000
 
 /* You can include other header file, if you want. */
-
+#include <string.h>
 
 /*******************************************************************
  * struct tcb
@@ -35,6 +35,7 @@ struct ucontext_t *t_context;
 LIST_HEAD(tcbs);
 
 struct tcb* Main;
+struct tcb* Main_Proxy;
 
 struct tcb* prev_tcb;
 struct tcb* running_tcb;
@@ -44,7 +45,10 @@ int terminate_tid = 0;
 int current_tid = 0;
 int next_tid = 0;
 
-bool start = false;
+int join_tid = 0;
+bool complete[10];
+
+bool start = true;
 bool finish = false;
 enum uthread_sched_policy current_policy;
 
@@ -59,7 +63,6 @@ void push_tcbs(ucontext_t* new_context, int params[]) // tcbs에 tcb저장
     new_tcb->priority = params[2];
 
     list_add_tail(&(new_tcb->list), &tcbs);
-    n_tcbs++;
 }
 
 void pop_tcbs(int del_tid)
@@ -77,11 +80,9 @@ void pop_tcbs(int del_tid)
       }
 		}
 
-    n_tcbs--;
-    if(n_tcbs==0)
-      start=false;
 		list_del(&(del_tcb->list));
-		free(del_tcb);
+    //if(del_tcb->tid!=1)
+		  //free(del_tcb);
 }
 
 /***************************************************************************************
@@ -169,7 +170,73 @@ void next_tcb() {
     }
   }
   else if(current_policy == RR){
+    /*
+    struct list_head* tp;
+    struct tcb* tp_tcb;
 
+    list_for_each(tp, &tcbs) {
+      tp_tcb = list_entry(tp, struct tcb, list);
+      printf("%d ",tp_tcb->tid);
+    }
+    printf("\n");
+    */
+
+    daum_tcb = rr_scheduling(Main);
+
+    if(running_tcb->tid == -1 && complete[join_tid]){
+      struct list_head* tp;
+      struct tcb* current_tcb;
+      struct tcb* tp_tcb;
+
+      if(daum_tcb != NULL){
+        list_for_each(tp, &tcbs) {
+          current_tcb = list_entry(tp, struct tcb, list);
+          if(current_tcb->tid == daum_tcb->tid){
+            (current_tcb->lifetime)++;
+            pop_tcbs(current_tcb->tid);
+            tp_tcb = current_tcb;
+            list_add(&(tp_tcb->list), &tcbs);
+          }
+        }
+      }
+
+      finish=true;
+      running_tcb = Main;
+      return;
+    } 
+
+    if(daum_tcb != NULL){
+      if(daum_tcb->lifetime == 0){
+        terminate_tid = daum_tcb->tid;
+        __exit();
+      }
+      __initialize_exit_context();
+
+      int a = running_tcb->tid, b=daum_tcb->tid;
+      if((running_tcb->tid != -2) || (daum_tcb->tid != -1)){
+        printf("SWAP %d -> %d\n", a, b);
+        //fprintf(stderr, "SWAP %d -> %d\n", running_tcb->tid, daum_tcb->tid);
+      };
+
+      if(daum_tcb->lifetime==0)
+        complete[daum_tcb->tid]=true;
+
+      prev_tcb = running_tcb;
+      running_tcb = daum_tcb;
+      makecontext(running_tcb->context, (void*)&next_tcb, 0);
+      swapcontext(prev_tcb->context, running_tcb->context);
+      
+      return;
+    }
+    else{
+      finish=true;
+      int a = running_tcb->tid;
+      if(a!=-1)
+        printf("SWAP %d -> %d\n", a, -1);
+        //fprintf(stderr, "SWAP %d -> %d\n", running_tcb->tid, -1);
+      running_tcb = Main;
+      return;
+    }
   }
   else if(current_policy == PRIO){
     daum_tcb = prio_scheduling(Main);
@@ -248,8 +315,43 @@ struct tcb *fifo_scheduling(struct tcb *next) {
  **************************************************************************************/
 struct tcb *rr_scheduling(struct tcb *next) {
 
-    /* TODO: You have to implement this function. */
+  /* TODO: You have to implement this function. */
+  ucontext_t* ncontext = (ucontext_t*)malloc(sizeof(ucontext_t));
+  ncontext->uc_link = 0;
+  ncontext->uc_stack.ss_sp=malloc(MEM);
+  ncontext->uc_stack.ss_size=MEM;
+  ncontext->uc_stack.ss_flags=0;
+  getcontext(ncontext);
 
+  struct tcb* tp_tcb = (struct tcb*)malloc(sizeof(struct tcb));
+  struct tcb* del_tcb = (struct tcb*)malloc(sizeof(struct tcb));
+  struct tcb* current_tcb;
+  struct list_head* tp;
+
+  list_for_each(tp, &tcbs) {
+    current_tcb = list_entry(tp, struct tcb, list);
+    if((current_tcb->tid == -1) || (current_tcb->lifetime > 0 && current_tcb->state == READY)){
+      
+      del_tcb->context = ncontext;
+      del_tcb->state = current_tcb->state;
+      del_tcb->tid = current_tcb->tid;
+      del_tcb->lifetime = current_tcb->lifetime;
+      del_tcb->priority = current_tcb->priority;
+
+      if(running_tcb->tid == -1 && del_tcb->tid == -1)
+        return NULL;
+
+      pop_tcbs(del_tcb->tid);
+      (del_tcb->lifetime)--;
+      (current_tcb->lifetime)--;
+        
+      list_add_tail(&(del_tcb->list), &tcbs);
+
+      return current_tcb;
+    }
+  }
+
+  return NULL;
 }
 
 /***************************************************************************************
@@ -321,17 +423,35 @@ struct tcb *sjf_scheduling(struct tcb *next) {
 void uthread_init(enum uthread_sched_policy policy) {
     /* TODO: You have to implement this function. */
     current_policy = policy;
+    memset(complete, false, sizeof(complete));
 
     Main = (struct tcb*)malloc(sizeof(struct tcb));
-    ucontext_t* new_context = (ucontext_t*)malloc(sizeof(ucontext_t));
-    
-    Main->context = new_context;
+    ucontext_t* ncontext = (ucontext_t*)malloc(sizeof(ucontext_t));
+
+    Main->context = ncontext;
     Main->state = READY;
     Main->tid = -1;
     Main->lifetime = 0;
     Main->priority = 0;
-
     getcontext(Main->context);
+
+    if(policy == RR){
+      Main_Proxy = (struct tcb*)malloc(sizeof(struct tcb));
+      ucontext_t* n2context = (ucontext_t*)malloc(sizeof(ucontext_t));
+      n2context->uc_link=ncontext;
+      n2context->uc_stack.ss_sp=malloc(MEM);
+      n2context->uc_stack.ss_size=MEM;
+      n2context->uc_stack.ss_flags=0;
+
+      Main_Proxy->context = n2context;
+      Main_Proxy->state = READY;
+      Main->tid = -2;
+      Main_Proxy->tid = -1;
+      Main_Proxy->lifetime = 0;
+      Main_Proxy->priority = 0;
+
+      getcontext(Main_Proxy->context);
+    }
 
     running_tcb = Main;
 }
@@ -358,6 +478,7 @@ int uthread_create(void* stub(void *), void* args) {
   ncontext->uc_stack.ss_size=MEM;
   ncontext->uc_stack.ss_flags=0;
 
+  n_tcbs++;
   push_tcbs(ncontext, params);
 }
 
@@ -374,19 +495,40 @@ void uthread_join(int tid) {
     /* TODO: You have to implement this function. */
     struct list_head* tp;
     struct tcb* current_tcb;
+    join_tid = tid;
 
     list_for_each(tp, &tcbs) {
       current_tcb = list_entry(tp, struct tcb, list);
 
+    struct list_head* tp;
+    struct tcb* tp_tcb;
+
+    /*
+		list_for_each(tp, &tcbs){
+      tp_tcb = list_entry(tp, struct tcb, list);
+      printf("%d ",tp_tcb->tid);
+		}
+    printf("\n");
+    */
+
       if(current_tcb->tid == tid){
         finish_check();
         while(!finish){
+          if(current_policy == RR){
+            if(complete[tid])
+              break;
+            if(!start)
+              pop_tcbs(-1);  
+            list_add(&(Main_Proxy->list), &tcbs);
+            start = false;
+          }
           next_tcb();
         }
-        int a = tid;
         printf("JOIN %d\n", tid);
+        n_tcbs--;
         //fprintf(stderr, "JOIN %d\n", a);
         pop_tcbs(tid);
+        finish = false;
         break;
       }
 
