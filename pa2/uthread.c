@@ -7,8 +7,6 @@
 #include "list_head.h"
 #include "types.h"
 
-#define MEM 3000
-
 /* You can include other header file, if you want. */
 #include <string.h>
 
@@ -32,11 +30,10 @@ struct tcb {
 
 int n_tcbs = 0;
 struct ucontext_t *t_context;
-LIST_HEAD(tcbs);
+
+enum uthread_sched_policy current_policy;
 
 struct tcb* Main;
-struct tcb* Main_Proxy;
-
 struct tcb* prev_tcb;
 struct tcb* running_tcb;
 struct tcb* daum_tcb;
@@ -44,13 +41,42 @@ struct tcb* daum_tcb;
 int terminate_tid = 0;
 int current_tid = 0;
 int next_tid = 0;
-
 int join_tid = 0;
+
 bool complete[10];
 
 bool start = true;
 bool finish = false;
-enum uthread_sched_policy current_policy;
+
+//**************
+  void worker(){
+    sigset_t set;
+    int signum;
+    int s=-1;
+    sigemptyset(&set);
+    sigaddset(&set, SIGALRM);
+    
+    if(current_policy == FIFO || current_policy == SJF){
+      while(1){
+        if((sigwait(&set,&s))==0)
+          break;    
+      };
+    }
+    else{
+      for (int i = 0; i < 100000; i++);
+    }
+  }
+
+//*************
+
+/***************************************************************************************
+ * LIST_HEAD(tcbs);
+ *
+ * DESCRIPTION
+ *    Initialize list head of thread control block. 
+ *
+ **************************************************************************************/
+LIST_HEAD(tcbs);
 
 void push_tcbs(ucontext_t* new_context, int params[]) // tcbs에 tcb저장
 {
@@ -81,17 +107,9 @@ void pop_tcbs(int del_tid)
 		}
 
 		list_del(&(del_tcb->list));
-    //if(del_tcb->tid!=1)
-		  //free(del_tcb);
+    if(del_tcb->tid!=1 && current_policy != RR)
+		  free(del_tcb);
 }
-
-/***************************************************************************************
- * LIST_HEAD(tcbs);
- *
- * DESCRIPTION
- *    Initialize list head of thread control block. 
- *
- **************************************************************************************/
 
 /***************************************************************************************
  * next_tcb()
@@ -103,6 +121,8 @@ void pop_tcbs(int del_tid)
  **************************************************************************************/
 void next_tcb() {
 
+  //printf("next_tcb\n");
+
   struct list_head* tp;
   struct tcb* current_tcb;
 
@@ -112,19 +132,18 @@ void next_tcb() {
     daum_tcb = fifo_scheduling(Main);
 
     if(daum_tcb != NULL){
-      
       terminate_tid = daum_tcb->tid;
       __exit();
       __initialize_exit_context();
 
-     int a = running_tcb->tid, b=daum_tcb->tid;
-     printf("SWAP %d -> %d\n", a, b);
-     //fprintf(stderr, "SWAP %d -> %d\n", running_tcb->tid, daum_tcb->tid);
+      int a = running_tcb->tid, b=daum_tcb->tid;
+      //printf("SWAP %d -> %d\n", a, b);
+      fprintf(stderr, "SWAP %d -> %d\n", running_tcb->tid, daum_tcb->tid);
 
       prev_tcb = running_tcb;
       running_tcb = daum_tcb;
 
-      makecontext(running_tcb->context, (void*)&next_tcb, 0);
+      makecontext(running_tcb->context, (void*)&worker, 0);
       swapcontext(prev_tcb->context, running_tcb->context);
 
       return;
@@ -132,8 +151,8 @@ void next_tcb() {
     else{
       finish=true;
       int a = running_tcb->tid;
-      printf("SWAP %d -> %d\n", a, -1);
-      //fprintf(stderr, "SWAP %d -> %d\n", running_tcb->tid, -1);
+      //printf("SWAP %d -> %d\n", a, -1);
+      fprintf(stderr, "SWAP %d -> %d\n", running_tcb->tid, -1);
       running_tcb = Main;
       return;
     }
@@ -149,13 +168,13 @@ void next_tcb() {
       __initialize_exit_context();
 
      int a = running_tcb->tid, b=daum_tcb->tid;
-     printf("SWAP %d -> %d\n", a, b);
-     //fprintf(stderr, "SWAP %d -> %d\n", running_tcb->tid, daum_tcb->tid);
+     //printf("SWAP %d -> %d\n", a, b);
+     fprintf(stderr, "SWAP %d -> %d\n", running_tcb->tid, daum_tcb->tid);
 
       prev_tcb = running_tcb;
       running_tcb = daum_tcb;
 
-      makecontext(running_tcb->context, (void*)&next_tcb, 0);
+      makecontext(running_tcb->context, (void*)&worker, 0);
       swapcontext(prev_tcb->context, running_tcb->context);
 
       return;
@@ -163,8 +182,8 @@ void next_tcb() {
     else{
       finish=true;
       int a = running_tcb->tid;
-      printf("SWAP %d -> %d\n", a, -1);
-      //fprintf(stderr, "SWAP %d -> %d\n", running_tcb->tid, -1);
+      //printf("SWAP %d -> %d\n", a, -1);
+      fprintf(stderr, "SWAP %d -> %d\n", running_tcb->tid, -1);
       running_tcb = Main;
       return;
     }
@@ -204,7 +223,6 @@ void next_tcb() {
       running_tcb = Main;
       return;
     } 
-
     if(daum_tcb != NULL){
       if(daum_tcb->lifetime == 0){
         terminate_tid = daum_tcb->tid;
@@ -214,8 +232,7 @@ void next_tcb() {
 
       int a = running_tcb->tid, b=daum_tcb->tid;
       if((running_tcb->tid != -2) || (daum_tcb->tid != -1)){
-        printf("SWAP %d -> %d\n", a, b);
-        //fprintf(stderr, "SWAP %d -> %d\n", running_tcb->tid, daum_tcb->tid);
+        fprintf(stdout, "SWAP %d -> %d\n", a, b);
       };
 
       if(daum_tcb->lifetime==0)
@@ -223,7 +240,7 @@ void next_tcb() {
 
       prev_tcb = running_tcb;
       running_tcb = daum_tcb;
-      makecontext(running_tcb->context, (void*)&next_tcb, 0);
+      makecontext(running_tcb->context, (void*)&worker, 0);
       swapcontext(prev_tcb->context, running_tcb->context);
       
       return;
@@ -232,8 +249,8 @@ void next_tcb() {
       finish=true;
       int a = running_tcb->tid;
       if(a!=-1)
-        printf("SWAP %d -> %d\n", a, -1);
-        //fprintf(stderr, "SWAP %d -> %d\n", running_tcb->tid, -1);
+        //printf("SWAP %d -> %d\n", a, -1);
+        fprintf(stderr, "SWAP %d -> %d\n", a, -1);
       running_tcb = Main;
       return;
     }
@@ -251,15 +268,15 @@ void next_tcb() {
         __initialize_exit_context();
 
      int a = running_tcb->tid, b=daum_tcb->tid;
-     printf("SWAP %d -> %d\n", a, b);
-     //fprintf(stderr, "SWAP %d -> %d\n", running_tcb->tid, daum_tcb->tid);
+     //printf("SWAP %d -> %d\n", a, b);
+     fprintf(stderr, "SWAP %d -> %d\n", a, b);
 
       prev_tcb = running_tcb;
       running_tcb = daum_tcb;
 
-      makecontext(running_tcb->context, (void*)&next_tcb, 0);
+      makecontext(running_tcb->context, (void*)&worker, 0);
       if(prev_tcb->tid == running_tcb->tid)
-        next_tcb();
+        worker();
       else
         swapcontext(prev_tcb->context, running_tcb->context);
 
@@ -269,8 +286,8 @@ void next_tcb() {
       finish=true;
       int a = running_tcb->tid;
       if(a!=-1)
-        printf("SWAP %d -> %d\n", a, -1);
-        //fprintf(stderr, "SWAP %d -> %d\n", running_tcb->tid, -1);
+        //printf("SWAP %d -> %d\n", a, -1);
+        fprintf(stderr, "SWAP %d -> %d\n", a, -1);
       running_tcb = Main;
       return;
     }
@@ -318,8 +335,8 @@ struct tcb *rr_scheduling(struct tcb *next) {
   /* TODO: You have to implement this function. */
   ucontext_t* ncontext = (ucontext_t*)malloc(sizeof(ucontext_t));
   ncontext->uc_link = 0;
-  ncontext->uc_stack.ss_sp=malloc(MEM);
-  ncontext->uc_stack.ss_size=MEM;
+  ncontext->uc_stack.ss_sp=malloc(SIGSTKSZ);
+  ncontext->uc_stack.ss_size=SIGSTKSZ;
   ncontext->uc_stack.ss_flags=0;
   getcontext(ncontext);
 
@@ -429,31 +446,19 @@ void uthread_init(enum uthread_sched_policy policy) {
     ucontext_t* ncontext = (ucontext_t*)malloc(sizeof(ucontext_t));
 
     Main->context = ncontext;
-    Main->state = READY;
-    Main->tid = -1;
-    Main->lifetime = 0;
-    Main->priority = 0;
+    Main->state = TERMINATED;
+    Main->tid = MAIN_THREAD_TID;
+    Main->lifetime = MAIN_THREAD_LIFETIME;
+    Main->priority = MAIN_THREAD_PRIORITY;
     getcontext(Main->context);
 
-    if(policy == RR){
-      Main_Proxy = (struct tcb*)malloc(sizeof(struct tcb));
-      ucontext_t* n2context = (ucontext_t*)malloc(sizeof(ucontext_t));
-      n2context->uc_link=ncontext;
-      n2context->uc_stack.ss_sp=malloc(MEM);
-      n2context->uc_stack.ss_size=MEM;
-      n2context->uc_stack.ss_flags=0;
-
-      Main_Proxy->context = n2context;
-      Main_Proxy->state = READY;
-      Main->tid = -2;
-      Main_Proxy->tid = -1;
-      Main_Proxy->lifetime = 0;
-      Main_Proxy->priority = 0;
-
-      getcontext(Main_Proxy->context);
-    }
+    n_tcbs++;
 
     running_tcb = Main;
+
+    /* DO NOT MODIFY THESE TWO LINES */
+    __create_run_timer();
+    __initialize_exit_context();
 }
 
 /***************************************************************************************
@@ -471,12 +476,10 @@ int uthread_create(void* stub(void *), void* args) {
   ucontext_t* ncontext = (ucontext_t*)malloc(sizeof(ucontext_t));
   getcontext(ncontext);
 
-  char* new_stack = (char*)malloc(sizeof(char)*3000);
-
   ncontext->uc_link=0;
-  ncontext->uc_stack.ss_sp=malloc(MEM);
-  ncontext->uc_stack.ss_size=MEM;
-  ncontext->uc_stack.ss_flags=0;
+  ncontext->uc_stack.ss_sp = malloc(SIGSTKSZ);
+  ncontext->uc_stack.ss_size = SIGSTKSZ;
+  ncontext->uc_stack.ss_flags = 0;
 
   n_tcbs++;
   push_tcbs(ncontext, params);
@@ -491,7 +494,6 @@ int uthread_create(void* stub(void *), void* args) {
  *
  **************************************************************************************/
 void uthread_join(int tid) {
-
     /* TODO: You have to implement this function. */
     struct list_head* tp;
     struct tcb* current_tcb;
@@ -500,38 +502,18 @@ void uthread_join(int tid) {
     list_for_each(tp, &tcbs) {
       current_tcb = list_entry(tp, struct tcb, list);
 
-    struct list_head* tp;
-    struct tcb* tp_tcb;
-
-    /*
-		list_for_each(tp, &tcbs){
-      tp_tcb = list_entry(tp, struct tcb, list);
-      printf("%d ",tp_tcb->tid);
-		}
-    printf("\n");
-    */
-
       if(current_tcb->tid == tid){
         finish_check();
-        while(!finish){
-          if(current_policy == RR){
-            if(complete[tid])
-              break;
-            if(!start)
-              pop_tcbs(-1);  
-            list_add(&(Main_Proxy->list), &tcbs);
-            start = false;
-          }
-          next_tcb();
-        }
-        printf("JOIN %d\n", tid);
+        while(!finish);
         n_tcbs--;
-        //fprintf(stderr, "JOIN %d\n", a);
+        if(current_policy!=RR)
+          fprintf(stderr, "JOIN %d\n", tid);
+        else
+          fprintf(stdout,"JOIN %d\n", tid);
         pop_tcbs(tid);
         finish = false;
         break;
       }
-
     }
 }
 
@@ -570,7 +552,9 @@ void __exit() {
 void __initialize_exit_context() {
 
     /* TODO: You have to implement this function. */
-  (daum_tcb->context)->uc_link = running_tcb->context;
+  if(daum_tcb != NULL)
+    (daum_tcb->context)->uc_link = running_tcb->context;
+
 }
 
 /***************************************************************************************
@@ -583,6 +567,7 @@ static struct itimerval time_quantum;
 static struct sigaction ticker;
 
 void __scheduler() {
+  //printf("start sched\n");
     if(n_tcbs > 1)
         next_tcb();
 }
