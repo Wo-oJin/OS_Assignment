@@ -49,61 +49,59 @@ struct tcb* running_tcb;
 struct tcb* daum_tcb;
 
 int terminate_tid = 0;
-int current_tid = 0;
-int next_tid = 0;
 int join_tid = 0;
 
-bool complete[10];
+bool complete[15];
 
 bool createBehindMain = false;
 bool finish = false;
 
-void push_tcbs(ucontext_t* new_context, int params[])
-{
-    struct tcb* new_tcb = (struct tcb*)malloc(sizeof(struct tcb));
+void push_tcbs(ucontext_t* new_context, int params[]){
+  
+  struct tcb* new_tcb = (struct tcb*)malloc(sizeof(struct tcb));
 
-    new_tcb->context = new_context;
-    new_tcb->state = READY;
-    new_tcb->tid = params[0];
-    new_tcb->lifetime = params[1];
-    new_tcb->priority = params[2];
+  new_tcb->context = new_context;
+  new_tcb->state = READY;
+  new_tcb->tid = params[0];
+  new_tcb->lifetime = params[1];
+  new_tcb->priority = params[2];
 
-    if(current_policy == RR){
-      struct list_head* tp;
-      struct tcb* current_tcb;
-      list_for_each(tp, &tcbs)
-        current_tcb = list_entry(tp, struct tcb, list);
+  if(current_policy == RR){
+    struct list_head* tp;
+    struct tcb* current_tcb;
+    list_for_each(tp, &tcbs)
+      current_tcb = list_entry(tp, struct tcb, list);
 
-      if(current_tcb -> tid == Main->tid)
-        createBehindMain = true;
-      else
-        createBehindMain = false;
-    }
+    if(current_tcb -> tid == Main->tid)
+      createBehindMain = true;
+    else
+      createBehindMain = false;
+  }
     
-
-    list_add_tail(&(new_tcb->list), &tcbs);
+  list_add_tail(&(new_tcb->list), &tcbs);
 }
 
-void pop_tcbs(int del_tid)
-{
-		struct list_head* tp;
-		struct tcb* del_tcb;
-    struct tcb* tp_tcb;
+void pop_tcbs(int del_tid){
+  struct list_head* tp;
+	struct tcb* del_tcb;
+  struct tcb* tp_tcb;
 
-		list_for_each(tp, &tcbs){
-      tp_tcb = list_entry(tp, struct tcb, list);
-      if(tp_tcb->tid == del_tid){
-			  del_tcb = list_entry(tp, struct tcb, list);
-        break;
-      }
-		}
+	list_for_each(tp, &tcbs){
+    tp_tcb = list_entry(tp, struct tcb, list);
+    if(tp_tcb->tid == del_tid){
+			del_tcb = list_entry(tp, struct tcb, list);
+      break;
+    }
+	}
 
-		list_del(&(del_tcb->list));
-    if(del_tcb->tid!=1 && current_policy != RR)
-		  free(del_tcb);
+	list_del(&(del_tcb->list));
+
+  if(del_tcb->tid!=-1)
+		free(del_tcb);
 }
 
-void worker(){
+void worker(){ //merge preemptive, non-preemptive workers
+  
   int s=-1;
   sigset_t set;
   sigemptyset(&set);
@@ -120,6 +118,22 @@ void worker(){
   }
 }
 
+void finish_check(){ //check if join tcb is terminated
+  
+  struct list_head* tp;
+  struct tcb* current_tcb;
+
+  list_for_each(tp, &tcbs) {
+    current_tcb = list_entry(tp, struct tcb, list);
+    if(current_tcb->state != TERMINATED){
+      finish = false;
+      return;
+    }
+  }
+  finish = true;
+  return;
+}
+
 /***************************************************************************************
  * next_tcb()
  *
@@ -129,7 +143,6 @@ void worker(){
  *
  **************************************************************************************/
 void next_tcb() {
-  /* TODO: You have to implement this function. */
   //printf("next_tcb start\n");
 
   struct list_head* tp;
@@ -200,11 +213,6 @@ void next_tcb() {
     }
   }
   else if(current_policy == RR){
-    sigset_t mask;
-    sigaddset(&mask, SIGALRM);
-    //sigprocmask(SIG_BLOCK, &mask, NULL);
-    //running_tcb->context->uc_sigmask = mask;
-
     daum_tcb = rr_scheduling(next);
 
     if(running_tcb->tid == -1 && complete[join_tid]){
@@ -256,22 +264,8 @@ void next_tcb() {
   }
 }
 
-void finish_check(){
-  struct list_head* tp;
-  struct tcb* current_tcb;
-
-  list_for_each(tp, &tcbs) {
-    current_tcb = list_entry(tp, struct tcb, list);
-    if(current_tcb->state != TERMINATED){
-      finish = false;
-      return;
-    }
-  }
-  finish = true;
-  return;
-}
-
 struct tcb *fifo_scheduling(struct tcb *next) {
+  
   struct list_head* tp;
 
   list_for_each(tp, &tcbs) {
@@ -291,7 +285,7 @@ struct tcb *fifo_scheduling(struct tcb *next) {
  *
  **************************************************************************************/
 struct tcb *rr_scheduling(struct tcb *next) {
-  /* TODO: You have to implement this function. */
+  
   struct list_head* tp;
 
   list_for_each(tp, &tcbs) {
@@ -335,7 +329,6 @@ struct tcb *rr_scheduling(struct tcb *next) {
  **************************************************************************************/
 struct tcb *prio_scheduling(struct tcb *next) {
 
-  /* TODO: You have to implement this function. */
   struct list_head* tp;
   struct tcb* prior_tcb = NULL;
   int max = -1;
@@ -365,7 +358,6 @@ struct tcb *prio_scheduling(struct tcb *next) {
  **************************************************************************************/
 struct tcb *sjf_scheduling(struct tcb *next) {
 
-  /* TODO: You have to implement this function. */
   struct list_head* tp;
   struct tcb* shortest_tcb = NULL;
   int min = 100;
@@ -390,31 +382,46 @@ struct tcb *sjf_scheduling(struct tcb *next) {
  **************************************************************************************/
 
 void uthread_init(enum uthread_sched_policy policy) {
-    /* TODO: You have to implement this function. */
-    current_policy = policy;
-    memset(complete, false, sizeof(complete));
+  
+  current_policy = policy;
+  memset(complete, false, sizeof(complete));
 
-    Main = (struct tcb*)malloc(sizeof(struct tcb));
-    ucontext_t* ncontext = (ucontext_t*)malloc(sizeof(ucontext_t));
+  Main = (struct tcb*)malloc(sizeof(struct tcb));
+  ucontext_t* ncontext = (ucontext_t*)malloc(sizeof(ucontext_t));
+  getcontext(ncontext);
+
+  Main->context = ncontext;
+  Main->state = TERMINATED;
+  Main->tid = MAIN_THREAD_TID;
+  Main->lifetime = MAIN_THREAD_LIFETIME;
+  Main->priority = MAIN_THREAD_PRIORITY;
+
+  if(current_policy == RR){
+    int params[] = {MAIN_THREAD_TID, MAIN_THREAD_LIFETIME, MAIN_THREAD_PRIORITY};
+    struct tcb* proxy = (struct tcb*)malloc(sizeof(struct tcb));
+    ncontext = (ucontext_t*)malloc(sizeof(ucontext_t));
     getcontext(ncontext);
 
-    Main->context = ncontext;
-    Main->state = TERMINATED;
-    Main->tid = MAIN_THREAD_TID;
-    Main->lifetime = MAIN_THREAD_LIFETIME;
-    Main->priority = MAIN_THREAD_PRIORITY;
+    ncontext->uc_link = 0;
+    ncontext->uc_stack.ss_sp=malloc(SIGSTKSZ);
+    ncontext->uc_stack.ss_size=SIGSTKSZ;
+    ncontext->uc_stack.ss_flags=0;
 
-    if(current_policy == RR){
-      int params[] = {MAIN_THREAD_TID, MAIN_THREAD_LIFETIME, MAIN_THREAD_PRIORITY};
-      uthread_create((void *)worker, (void*)params);
-    }
+    proxy -> context = ncontext;
+    proxy -> tid = MAIN_THREAD_TID;
+    proxy -> lifetime = MAIN_THREAD_LIFETIME;
+    proxy -> priority = MAIN_THREAD_PRIORITY;
 
-    n_tcbs++;
-    running_tcb = Main;
+    list_add(&(proxy->list),&tcbs);
+    //uthread_create((void *)worker, (void*)params);
+  }
 
-    /* DO NOT MODIFY THESE TWO LINES */
-    __create_run_timer();
-    __initialize_exit_context();
+  n_tcbs++;
+  running_tcb = Main;
+
+  /* DO NOT MODIFY THESE TWO LINES */
+  __create_run_timer();
+  __initialize_exit_context();
 }
 
 /***************************************************************************************
@@ -427,7 +434,6 @@ void uthread_init(enum uthread_sched_policy policy) {
  **************************************************************************************/
 int uthread_create(void* stub(void *), void* args) {
 
-  /* TODO: You have to implement this function. */
   int* params = (int*)args;
   ucontext_t* ncontext = (ucontext_t*)malloc(sizeof(ucontext_t));
   getcontext(ncontext);
@@ -440,11 +446,31 @@ int uthread_create(void* stub(void *), void* args) {
   n_tcbs++;
   push_tcbs(ncontext, params);
 
-  if(current_policy == RR && createBehindMain){
+  if(createBehindMain && current_policy == RR){
     int params[] = {MAIN_THREAD_TID, MAIN_THREAD_LIFETIME, MAIN_THREAD_PRIORITY};
     pop_tcbs(Main->tid);
-    uthread_create((void *)worker, (void*)params);
+    
+    struct tcb* proxy = (struct tcb*)malloc(sizeof(struct tcb));
+    ncontext = (ucontext_t*)malloc(sizeof(ucontext_t));
+    getcontext(ncontext);
+
+    ncontext->uc_link = 0;
+    ncontext->uc_stack.ss_sp=malloc(SIGSTKSZ);
+    ncontext->uc_stack.ss_size=SIGSTKSZ;
+    ncontext->uc_stack.ss_flags=0;
+
+    proxy -> context = ncontext;
+    proxy -> tid = MAIN_THREAD_TID;
+    proxy -> lifetime = MAIN_THREAD_LIFETIME;
+    proxy -> priority = MAIN_THREAD_PRIORITY;
+
+    list_add_tail(&(proxy->list),&tcbs);
+
+    //pop_tcbs(Main->tid);
+    //uthread_create((void *)stub, (void*)params);
   }
+
+  return params[0];
 }
 
 /***************************************************************************************
@@ -456,7 +482,7 @@ int uthread_create(void* stub(void *), void* args) {
  *
  **************************************************************************************/
 void uthread_join(int tid) {
-  /* TODO: You have to implement this function. */
+
   struct list_head* tp;
   struct tcb* current_tcb;
   join_tid = tid;
@@ -492,7 +518,7 @@ void uthread_join(int tid) {
  *
  **************************************************************************************/
 void __exit() {
-  /* TODO: You have to implement this function. */
+  
   struct list_head* tp;
   struct tcb* current_tcb;
 
@@ -517,7 +543,6 @@ void __exit() {
  **************************************************************************************/
 void __initialize_exit_context() {
 
-  /* TODO: You have to implement this function. */
   if(daum_tcb != NULL)
     (daum_tcb->context)->uc_link = running_tcb->context;
 
