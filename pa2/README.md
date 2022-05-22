@@ -3,7 +3,7 @@
 ### *** Due on 11:59pm, May 25 (Wednesday)***
 
 ### Goal
-This programming assignment is to (1) implement your own user-level thread library and then (2) make schedulers (e.g., FIFO, RR, and SJF) for the threads. The goal of this project is to help you understand the role of a CPU scheduler in operating systems and the principle of how multiple threads are executed concurrently. 
+This programming assignment is to (1) implement your own user-level thread library and then (2) make schedulers (e.g., FIFO, RR, and SJF) for the threads. The goal of this project is to help you understand the role of a CPU scheduler in operating systems and the principle of how multiple threads are executed concurrently.
 
 ### Background
 - A thread is the smallest execution unit that can be managed by a scheduler. One process can create multiple threads that share code, data, and heap space in the same address space. In Linux, the Pthread library provides either a user-level or kernel-level thread.
@@ -18,7 +18,7 @@ This programming assignment is to (1) implement your own user-level thread libra
 #### User-level thread library and Scheduling
 - Your first task is to implement your own user-level thread library with `ucontext.h`. This library provides some functions and structure that allow user-level context switching.
 
-- With the user-level threads spawned from the library, your second job is to make your own scheduler to schedule them. Use `signal.h` to implement the scheduler.
+- With the user-level threads spawned from the library, your second job is to make your own scheduler to schedule them.
 
 - You are required to implement four scheduling policy (First-In-First-Out, Rount-Robin, Priority, and Shortest-Job-First). Please check the lecture notes to remind how they work.
 
@@ -30,10 +30,10 @@ FIFO
 CREATE 0 4 0
 CREATE 1 3 0
 JOIN 0
-JOIN 1 
+JOIN 1
 ```
 - In the `testcases` directory, you can see several `.txt` file. They are the input of `pa2.c`. An example of input is above.
-- The first line of input file indicates the scheduling policy used in program. 
+- The first line of input file indicates the scheduling policy used in program.
 - The first column, **CREATE**, makes a function call to `uthread_create`. Each of the following columns means *tid*, *lifetime*, and *priority*, respectively. The **JOIN** command invokes the `uthread_join` function. 0 means the target thread’s tid is 0.
 - When you implement `uthread_create`, use this information.
 
@@ -52,7 +52,11 @@ JOIN 1
 
 - Please check carefully the Linux Manual Page. There is a lot of information for the project.
 
-- You have to print your output below format. Please do not print in situation that SWAP main -> main. 
+- When you create user-level thread, you can implement easily preemptive and non-preemptive scheduling. Use some function in `signal.h`.
+
+- Do not call these functions directly. `next_tcb()`, `__scheduler()`
+
+- You have to print your output below format. Please do not print in situation that SWAP main -> main.
 ```
 fprintf(stderr, "SWAP %d -> %d\n", prev->tid, next->tid);
 fprintf(stedrr, "JOIN %d\n", current->tid);
