@@ -10,6 +10,9 @@
 /* You can include other header file, if you want. */
 #include <string.h>
 
+void *__preemptive_worker(void* args);
+void *__non_preemptive_worker(void* args);
+
 /*******************************************************************
  * struct tcb
  *
@@ -41,6 +44,9 @@ int n_tcbs = 0;
 
 struct ucontext_t *t_context;
 
+////
+sigset_t set;
+
 enum uthread_sched_policy current_policy;
 
 struct tcb* Main;
@@ -55,6 +61,7 @@ bool complete[15];
 
 bool createBehindMain = false;
 bool finish = false;
+///
 
 void push_tcbs(ucontext_t* new_context, int params[]){
   
@@ -100,24 +107,6 @@ void pop_tcbs(int del_tid){
 		free(del_tcb);
 }
 
-void worker(){ //merge preemptive, non-preemptive workers
-  
-  int s=-1;
-  sigset_t set;
-  sigemptyset(&set);
-  sigaddset(&set, SIGALRM);
-    
-  if(current_policy == PRIO || current_policy == RR){ //preemptive
-    while(1){
-      if((sigwait(&set,&s))==0)
-        break;    
-    };
-  }
-  else{ //non-preemptive
-    for (int i = 0; i < 100000; i++);
-  }
-}
-
 void finish_check(){ //check if join tcb is terminated
   
   struct list_head* tp;
@@ -149,6 +138,8 @@ void next_tcb() {
   struct tcb* current_tcb;
   struct tcb* next = (struct tcb*)malloc(sizeof(struct tcb));
 
+  int s=-1;
+
   if(current_policy == FIFO || current_policy == SJF){
 
     if(current_policy == FIFO)
@@ -161,19 +152,22 @@ void next_tcb() {
 
       __exit();
       __initialize_exit_context();
-      fprintf(stderr, "SWAP %d -> %d\n", running_tcb->tid, daum_tcb->tid);
+      
+      if(running_tcb->tid!=-1 || daum_tcb->tid!=-1)
+        fprintf(stderr, "SWAP %d -> %d\n", running_tcb->tid, daum_tcb->tid);
 
       prev_tcb = running_tcb;
       running_tcb = daum_tcb;
 
-      makecontext(running_tcb->context, (void*)&worker, 0);
+      makecontext(running_tcb->context, (void*)&__non_preemptive_worker, 0);
       swapcontext(prev_tcb->context, running_tcb->context);
 
       return;
     }
     else{
       finish = true;
-      fprintf(stderr, "SWAP %d -> %d\n", running_tcb->tid, Main->tid);
+      if(running_tcb->tid!=-1)
+        fprintf(stderr, "SWAP %d -> %d\n", running_tcb->tid, Main->tid);
       running_tcb = Main;
       return;
     }
@@ -191,23 +185,28 @@ void next_tcb() {
       if(running_tcb->tid != daum_tcb->tid)
         __initialize_exit_context();
 
-      fprintf(stderr, "SWAP %d -> %d\n", running_tcb->tid, daum_tcb->tid);
+      if(running_tcb->tid!=-1 || daum_tcb->tid!=-1)
+        fprintf(stderr,"SWAP %d -> %d\n", running_tcb->tid, daum_tcb->tid);
 
       prev_tcb = running_tcb;
       running_tcb = daum_tcb;
 
-      makecontext(running_tcb->context, (void*)&worker, 0);
+      makecontext(running_tcb->context, (void*)__preemptive_worker, 0);
+      running_tcb->context->uc_sigmask = set;
 
       if(prev_tcb->tid == running_tcb->tid)
-        worker();
-      else
-        swapcontext(prev_tcb->context, running_tcb->context);
+         while((sigwait(&set,&s)!=0));
+      else{
+        while((sigwait(&set,&s)!=0))
+          swapcontext(prev_tcb->context, running_tcb->context);
+      }
 
       return;
     }
     else{
       finish=true;
-      fprintf(stderr, "SWAP %d -> %d\n", running_tcb->tid, Main->tid);
+      if(running_tcb->tid!=-1)
+        fprintf(stderr,"SWAP %d -> %d\n", running_tcb->tid, Main->tid);
       running_tcb = Main;
       return;
     }
@@ -250,14 +249,16 @@ void next_tcb() {
       prev_tcb = running_tcb;
       running_tcb = daum_tcb;
 
-      makecontext(running_tcb->context, (void*)&worker, 0);
-      swapcontext(prev_tcb->context, running_tcb->context);
+      makecontext(running_tcb->context, (void*)__preemptive_worker, 0);
+      while((sigwait(&set,&s)!=0))
+          swapcontext(prev_tcb->context, running_tcb->context);
       
       return;
     }
     else{
       finish=true;
-      fprintf(stderr, "SWAP %d -> %d\n", running_tcb->tid, Main->tid);
+      if(running_tcb->tid!=-1)
+        fprintf(stderr, "SWAP %d -> %d\n", running_tcb->tid, Main->tid);
       running_tcb = Main;
       return;
     }
@@ -293,14 +294,13 @@ struct tcb *rr_scheduling(struct tcb *next) {
     if(next->lifetime > 0 && next->state == READY){
       struct tcb* del_tcb = (struct tcb*)malloc(sizeof(struct tcb));
       
-      ucontext_t* ncontext = (ucontext_t*)malloc(sizeof(ucontext_t));
-      ncontext->uc_link = 0;
-      ncontext->uc_stack.ss_sp=malloc(SIGSTKSZ);
-      ncontext->uc_stack.ss_size=SIGSTKSZ;
-      ncontext->uc_stack.ss_flags=0;
-      getcontext(ncontext);
+      t_context->uc_link = 0;
+      t_context->uc_stack.ss_sp=malloc(SIGSTKSZ);
+      t_context->uc_stack.ss_size=SIGSTKSZ;
+      t_context->uc_stack.ss_flags=0;
+      getcontext(t_context);
       
-      del_tcb->context = ncontext;
+      del_tcb->context = t_context;
       del_tcb->state = next->state;
       del_tcb->tid = next->tid;
       del_tcb->lifetime = next->lifetime;
@@ -386,34 +386,37 @@ void uthread_init(enum uthread_sched_policy policy) {
   current_policy = policy;
   memset(complete, false, sizeof(complete));
 
-  Main = (struct tcb*)malloc(sizeof(struct tcb));
-  ucontext_t* ncontext = (ucontext_t*)malloc(sizeof(ucontext_t));
-  getcontext(ncontext);
+  sigemptyset(&set);
+  sigaddset(&set, SIGALRM);
+  //sigaddset(&set, SIGINT);
 
-  Main->context = ncontext;
+  t_context = (ucontext_t*)malloc(sizeof(ucontext_t));
+  Main = (struct tcb*)malloc(sizeof(struct tcb));
+
+  Main->context = t_context;
   Main->state = TERMINATED;
   Main->tid = MAIN_THREAD_TID;
   Main->lifetime = MAIN_THREAD_LIFETIME;
   Main->priority = MAIN_THREAD_PRIORITY;
 
+  getcontext(t_context);
+
   if(current_policy == RR){
     int params[] = {MAIN_THREAD_TID, MAIN_THREAD_LIFETIME, MAIN_THREAD_PRIORITY};
     struct tcb* proxy = (struct tcb*)malloc(sizeof(struct tcb));
-    ncontext = (ucontext_t*)malloc(sizeof(ucontext_t));
-    getcontext(ncontext);
+    getcontext(t_context);
 
-    ncontext->uc_link = 0;
-    ncontext->uc_stack.ss_sp=malloc(SIGSTKSZ);
-    ncontext->uc_stack.ss_size=SIGSTKSZ;
-    ncontext->uc_stack.ss_flags=0;
+    t_context->uc_link = 0;
+    t_context->uc_stack.ss_sp=malloc(SIGSTKSZ);
+    t_context->uc_stack.ss_size=SIGSTKSZ;
+    t_context->uc_stack.ss_flags=0;
 
-    proxy -> context = ncontext;
+    proxy -> context = t_context;
     proxy -> tid = MAIN_THREAD_TID;
     proxy -> lifetime = MAIN_THREAD_LIFETIME;
     proxy -> priority = MAIN_THREAD_PRIORITY;
 
     list_add(&(proxy->list),&tcbs);
-    //uthread_create((void *)worker, (void*)params);
   }
 
   n_tcbs++;
@@ -435,39 +438,36 @@ void uthread_init(enum uthread_sched_policy policy) {
 int uthread_create(void* stub(void *), void* args) {
 
   int* params = (int*)args;
-  ucontext_t* ncontext = (ucontext_t*)malloc(sizeof(ucontext_t));
-  getcontext(ncontext);
 
-  ncontext->uc_link=0;
-  ncontext->uc_stack.ss_sp = malloc(SIGSTKSZ);
-  ncontext->uc_stack.ss_size = SIGSTKSZ;
-  ncontext->uc_stack.ss_flags = 0;
+  t_context->uc_link=0;
+  t_context->uc_stack.ss_sp = malloc(SIGSTKSZ);
+  t_context->uc_stack.ss_size = SIGSTKSZ;
+  t_context->uc_stack.ss_flags = 0;
+
+  getcontext(t_context);
 
   n_tcbs++;
-  push_tcbs(ncontext, params);
+  push_tcbs(t_context, params);
 
   if(createBehindMain && current_policy == RR){
     int params[] = {MAIN_THREAD_TID, MAIN_THREAD_LIFETIME, MAIN_THREAD_PRIORITY};
     pop_tcbs(Main->tid);
     
     struct tcb* proxy = (struct tcb*)malloc(sizeof(struct tcb));
-    ncontext = (ucontext_t*)malloc(sizeof(ucontext_t));
-    getcontext(ncontext);
 
-    ncontext->uc_link = 0;
-    ncontext->uc_stack.ss_sp=malloc(SIGSTKSZ);
-    ncontext->uc_stack.ss_size=SIGSTKSZ;
-    ncontext->uc_stack.ss_flags=0;
+    t_context->uc_link = 0;
+    t_context->uc_stack.ss_sp=malloc(SIGSTKSZ);
+    t_context->uc_stack.ss_size=SIGSTKSZ;
+    t_context->uc_stack.ss_flags=0;
 
-    proxy -> context = ncontext;
+    proxy -> context = t_context;
     proxy -> tid = MAIN_THREAD_TID;
     proxy -> lifetime = MAIN_THREAD_LIFETIME;
     proxy -> priority = MAIN_THREAD_PRIORITY;
 
-    list_add_tail(&(proxy->list),&tcbs);
+    getcontext(t_context);
 
-    //pop_tcbs(Main->tid);
-    //uthread_create((void *)stub, (void*)params);
+    list_add_tail(&(proxy->list),&tcbs);
   }
 
   return params[0];
@@ -492,6 +492,7 @@ void uthread_join(int tid) {
     
     if(current_tcb->tid == tid){
       finish_check();
+
       while(!finish){
         if(current_policy == RR){
           if(complete[tid] && running_tcb->tid==-1)
