@@ -293,7 +293,8 @@ struct tcb *rr_scheduling(struct tcb *next) {
     next = list_entry(tp, struct tcb, list);
     if(next->lifetime > 0 && next->state == READY){
       struct tcb* del_tcb = (struct tcb*)malloc(sizeof(struct tcb));
-      
+      t_context = (ucontext_t*)malloc(sizeof(ucontext_t));
+
       t_context->uc_link = 0;
       t_context->uc_stack.ss_sp=malloc(SIGSTKSZ);
       t_context->uc_stack.ss_size=SIGSTKSZ;
@@ -403,6 +404,7 @@ void uthread_init(enum uthread_sched_policy policy) {
 
   if(current_policy == RR){
     int params[] = {MAIN_THREAD_TID, MAIN_THREAD_LIFETIME, MAIN_THREAD_PRIORITY};
+    t_context = (ucontext_t*)malloc(sizeof(ucontext_t));
     struct tcb* proxy = (struct tcb*)malloc(sizeof(struct tcb));
     getcontext(t_context);
 
@@ -439,6 +441,8 @@ int uthread_create(void* stub(void *), void* args) {
 
   int* params = (int*)args;
 
+  t_context = (ucontext_t*)malloc(sizeof(ucontext_t));
+
   t_context->uc_link=0;
   t_context->uc_stack.ss_sp = malloc(SIGSTKSZ);
   t_context->uc_stack.ss_size = SIGSTKSZ;
@@ -452,7 +456,8 @@ int uthread_create(void* stub(void *), void* args) {
   if(createBehindMain && current_policy == RR){
     int params[] = {MAIN_THREAD_TID, MAIN_THREAD_LIFETIME, MAIN_THREAD_PRIORITY};
     pop_tcbs(Main->tid);
-    
+
+    t_context = (ucontext_t*)malloc(sizeof(ucontext_t));    
     struct tcb* proxy = (struct tcb*)malloc(sizeof(struct tcb));
 
     t_context->uc_link = 0;
